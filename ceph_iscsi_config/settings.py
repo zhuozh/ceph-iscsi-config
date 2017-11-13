@@ -16,7 +16,7 @@ def init():
 class Settings(object):
 
     defaults = {"cluster_name": "ceph",
-                "gateway_keyring": "/etc/ceph/ceph.client.admin.keyring",
+                "gateway_keyring": "/var/lib/ceph/etc/ceph/ceph.client.radosgw.keyring",
                 "time_out": 30,
                 "api_port": 5000,
                 "api_secure": "true",
@@ -28,7 +28,7 @@ class Settings(object):
                 "ceph_user": "admin",
                 "debug": "false",
                 "minimum_gateways": 2,
-                "ceph_config_dir": '/etc/ceph',
+                "ceph_config_dir": '/var/lib/ceph/etc/ceph',
                 "priv_key": 'iscsi-gateway.key',
                 "pub_key": 'iscsi-gateway-pub.key'
                 }
@@ -39,7 +39,7 @@ class Settings(object):
                        "qfull_timeout" : 5
                        }
 
-    def __init__(self, conffile='/etc/ceph/iscsi-gateway.cfg'):
+    def __init__(self, conffile='/var/lib/ceph/etc/ceph/iscsi-gateway.cfg'):
 
         self.size_suffixes = ['M', 'G', 'T']
 
@@ -67,7 +67,7 @@ class Settings(object):
                 # We always want these values set to at least the defaults.
                 self._define_settings(Settings.target_defaults)
 
-        self.cephconf = '/etc/ceph/{}.conf'.format(self.cluster_name)
+        self.cephconf = '/var/lib/ceph/etc/ceph/{}.conf'.format(self.cluster_name)
         if self.api_secure:
             self.api_ssl_verify = False if self.api_secure else None
 

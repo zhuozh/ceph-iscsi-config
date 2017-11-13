@@ -45,7 +45,7 @@ def ceph_rm_blacklist(blacklisted_ip):
     logger.info("Removing blacklisted entry for this host : "
                 "{}".format(blacklisted_ip))
 
-    result = subprocess.check_output("ceph --conf {cephconf} osd blacklist rm {blacklisted_ip}".
+    result = subprocess.check_output("/var/lib/ceph/bin/ceph --conf {cephconf} osd blacklist rm {blacklisted_ip}".
                                      format(blacklisted_ip=blacklisted_ip,
                                             cephconf=settings.config.cephconf),
                                      stderr=subprocess.STDOUT, shell=True)
@@ -54,7 +54,7 @@ def ceph_rm_blacklist(blacklisted_ip):
         return True
     else:
         logger.critical("blacklist removal failed. Run"
-                        " 'ceph --conf {cephconf} osd blacklist rm {blacklisted_ip}'".
+                        " '/var/lib/ceph/bin/ceph --conf {cephconf} osd blacklist rm {blacklisted_ip}'".
                         format(blacklisted_ip=blacklisted_ip,
                                cephconf=settings.config.cephconf))
         return False
@@ -166,13 +166,13 @@ def osd_blacklist_cleanup():
 
         # NB. Need to use the stderr override to catch the output from
         # the command
-        blacklist = subprocess.check_output("ceph --conf {cephconf} osd blacklist ls".
+        blacklist = subprocess.check_output("/var/lib/ceph/bin/ceph --conf {cephconf} osd blacklist ls".
                                             format(cephconf=settings.config.cephconf),
                                             shell=True,
                                             stderr=subprocess.STDOUT)
 
     except subprocess.CalledProcessError:
-        logger.critical("Failed to run 'ceph --conf {cephconf} osd blacklist ls'. "
+        logger.critical("Failed to run '/var/lib/ceph/bin/ceph --conf {cephconf} osd blacklist ls'. "
                         "Please resolve manually...".format(cephconf=settings.config.cephconf))
         cleanup_state = False
     else:
