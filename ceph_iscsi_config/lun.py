@@ -197,7 +197,8 @@ class RBDDev(object):
 
 class LUN(object):
 
-    def __init__(self, logger, pool, image, size, allocating_host):
+    def __init__(self, logger, pool, image, size, allocating_host,
+                 cmd_time_out=None):
         self.logger = logger
         self.image = image
         self.pool = pool
@@ -209,6 +210,8 @@ class LUN(object):
         # the allocating host could be fqdn or shortname - but the config
         # only uses shortname so it needs to be converted to shortname format
         self.allocating_host = allocating_host.split('.')[0]
+
+        self.cmd_time_out = cmd_time_out
 
         self.owner = ''     # gateway that owns the preferred path for this LUN
         self.error = False
@@ -627,7 +630,8 @@ class LUN(object):
             return None
 
         try:
-            new_lun.set_attribute("cmd_time_out", 0)
+            if self.cmd_time_out is not None:
+                new_lun.set_attribute("cmd_time_out", self.cmd_time_out)
             new_lun.set_attribute("qfull_time_out",
                                   settings.config.qfull_timeout)
         except RTSLibError as err:
