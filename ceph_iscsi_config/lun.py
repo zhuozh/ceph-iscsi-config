@@ -632,6 +632,18 @@ class LUN(object):
         try:
             if self.cmd_time_out is not None:
                 new_lun.set_attribute("cmd_time_out", self.cmd_time_out)
+                cmd_time_out_attr = {"cmd_time_out": self.cmd_time_out}
+                self.config.update_item('disks', self.config_key,
+                                        cmd_time_out_attr)
+            else:
+                try:
+                    cmd_time_out = self.config.config['disks'][self.config_key]['cmd_time_out']
+                except KeyError:
+                    cmd_time_out = ''
+
+                if cmd_time_out is not '':
+                    new_lun.set_attribute("cmd_time_out", cmd_time_out)
+
             new_lun.set_attribute("qfull_time_out",
                                   settings.config.qfull_timeout)
         except RTSLibError as err:
