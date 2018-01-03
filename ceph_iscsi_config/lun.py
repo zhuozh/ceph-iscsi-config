@@ -407,6 +407,7 @@ class LUN(object):
                 self.logger.info("rbd image {} resized "
                                  "to {}".format(self.config_key,
                                                 self.size))
+                self.size_bytes = rbd_image._get_size_bytes()
                 self.num_changes += 1
             else:
                 self.logger.debug("rbd image {} size matches the configuration"
