@@ -573,6 +573,7 @@ class LUN(object):
                                                 self.size_bytes))
 
                 stg_object._control("dev_size={}".format(self.size_bytes))
+                stg_object.set_attribute("dev_size","{}".format(self.size_bytes))
 
                 size_ok = stg_object.size == self.size_bytes
 
