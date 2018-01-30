@@ -23,9 +23,9 @@ __author__ = 'pcuzner@redhat.com'
 
 class RBDDev(object):
 
-    rbd_feature_list = ['RBD_FEATURE_LAYERING', 'RBD_FEATURE_EXCLUSIVE_LOCK',
-                        'RBD_FEATURE_OBJECT_MAP', 'RBD_FEATURE_FAST_DIFF',
-                        'RBD_FEATURE_DEEP_FLATTEN']
+    rbd_feature_list = ['RBD_FEATURE_LAYERING', 'RBD_FEATURE_EXCLUSIVE_LOCK']
+                       # 'RBD_FEATURE_OBJECT_MAP', 'RBD_FEATURE_FAST_DIFF',
+                       # 'RBD_FEATURE_DEEP_FLATTEN']
 
     def __init__(self, image, size, pool='rbd'):
         self.image = image
