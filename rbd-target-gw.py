@@ -25,7 +25,7 @@ from ceph_iscsi_config.lun import LUN
 from ceph_iscsi_config.client import GWClient, CHAP
 from ceph_iscsi_config.common import Config
 from ceph_iscsi_config.lio import LIO, Gateway
-from ceph_iscsi_config.utils import this_host, human_size
+from ceph_iscsi_config.utils import this_host
 
 # Create a flask instance
 app = Flask(__name__)
@@ -300,7 +300,7 @@ def define_luns(gateway):
                         try:
                             with rbd.Image(ioctx, image_name) as rbd_image:
                                 image_bytes = rbd_image.size()
-                                image_size_h = human_size(image_bytes)
+                                image_size_h = str(image_bytes) + 'b'
 
                                 lun = LUN(logger, pool, image_name,
                                           image_size_h, local_gw)
