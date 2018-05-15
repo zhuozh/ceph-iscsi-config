@@ -10,7 +10,7 @@ import traceback
 import ceph_iscsi_config.settings as settings
 from ceph_iscsi_config.utils import get_time
 
-class ConfigTransaction(object):
+class ConfigTargetTransaction(object):
 
     def __init__(self, cfg_type, element_name, txn_action='add', initial_value=None):
 
@@ -24,6 +24,20 @@ class ConfigTransaction(object):
     def __repr__(self):
         return str(self.__dict__)
 
+class ConfigTransaction(object):
+
+    def __init__(self, target_name, cfg_type, element_name, txn_action='add', initial_value=None):
+
+        self.type = cfg_type
+        self.action = txn_action
+        self.target_name = target_name
+        self.item_name = element_name
+
+        init_state = {} if initial_value is None else initial_value
+        self.item_content = init_state
+
+    def __repr__(self):
+        return str(self.__dict__)
 
 class CephCluster(object):
 
@@ -51,9 +65,7 @@ class CephCluster(object):
 class Config(object):
 
     seed_config = {
-                    "disks": {},
-                    "gateways": {},
-                    "clients": {},
+                    "targets": {},
                     "groups": {},
                     "version": 3,
                     "epoch": 0,
@@ -72,6 +84,7 @@ class Config(object):
         self.reset = False
         self.error_msg = ""
         self.txn_list = []
+        self.target_txn_list = []
         self.config_locked = False
 
         self.ceph = CephCluster()
@@ -219,74 +232,109 @@ class Config(object):
         self.logger.debug("config refresh - current config is {}".format(self.config))
         self.config = self.get_config()
 
-    def add_item(self, cfg_type, element_name=None, initial_value=None):
+    def add_target_item(self, target_name, initial_value=None):
+
+        # ensure the initial state for this item has a 'created' date/time value
         now = get_time()
 
-        if element_name:
-            # ensure the initial state for this item has a 'created' date/time value
-            if isinstance(initial_value, dict):
-                if 'created' not in initial_value:
-                    initial_value['created'] = now
+        # ensure the initial state for this item has a 'created' date/time value
+        if isinstance(initial_value, dict):
+            if 'created' not in initial_value:
+                initial_value['created'] = now
 
-            if initial_value is None:
-                init_state = {"created": now}
-            else:
-                init_state = initial_value
-
-            self.config[cfg_type][element_name] = init_state
-
-            if isinstance(init_state, str) and 'created' not in self.config[cfg_type]:
-                self.config[cfg_type]['created'] = now
-                # add a separate transaction to capture the creation date to the section
-                txn = ConfigTransaction(cfg_type, 'created', initial_value=now)
-                self.txn_list.append(txn)
-
+        if initial_value is None:
+            init_state = {"created": now}
         else:
-            # new section being added to the config object
-            self.config[cfg_type] = initial_value
             init_state = initial_value
-            txn = ConfigTransaction(cfg_type, None, initial_value=initial_value)
-            self.txn_list.append(txn)
+
+        self.config['targets'][target_name] = init_state
+
+        self.logger.debug("(Config.add_target_item) config updated to {}".format(self.config))
+        self.changed = True
+
+        txn = ConfigTargetTransaction('targets', target_name, initial_value=init_state)
+        self.txn_list.append(txn)
+
+    def del_target_item(self, target_name):
+        self.changed = True
+        del self.config['targets'][target_name]
+        self.logger.debug("(Config.del_target_item) config updated to {}".format(self.config))
+
+        txn = ConfigTargetTransaction('targets', target_name, 'delete')
+        self.txn_list.append(txn)
+
+    def update_target_item(self, target_name, element_value):
+        now = get_time()
+
+        current_values = self.config['targets'][target_name]
+        self.logger.debug("prior to update, target_name item contains {}".format(target_name, current_values))
+        if isinstance(element_value, dict):
+            merged = current_values.copy()
+            new_dict = element_value
+            new_dict['updated'] = now
+            merged.update(new_dict)
+            element_value = merged.copy()
+
+        self.config['targets'][target_name] = element_value
+
+        self.logger.debug("(Config.update_target_item) config is {}".format(self.config))
+        self.changed = True
+        self.logger.debug("update_target_item: target={}, update={}".format(target_name, element_value))
+
+        txn = ConfigTargetTransaction('targets', target_name, 'add')
+        txn.item_content = element_value
+        self.txn_list.append(txn)
+
+    def add_item(self, target_name, cfg_type, element_name=None, initial_value=None):
+        now = get_time()
+
+        # ensure the initial state for this item has a 'created' date/time value
+        if isinstance(initial_value, dict):
+            if 'created' not in initial_value:
+                initial_value['created'] = now
+
+        if initial_value is None:
+            init_state = {"created": now}
+        else:
+            init_state = initial_value
+
+        self.config['targets'][target_name][cfg_type][element_name] = init_state
 
         self.logger.debug("(Config.add_item) config updated to {}".format(self.config))
         self.changed = True
 
-        txn = ConfigTransaction(cfg_type, element_name, initial_value=init_state)
-        self.txn_list.append(txn)
+        txn = ConfigTransaction(target_name, cfg_type, element_name, initial_value=init_state)
+        self.target_txn_list.append(txn)
 
-    def del_item(self, cfg_type, element_name):
+    def del_item(self, target_name, cfg_type, element_name):
         self.changed = True
-        del self.config[cfg_type][element_name]
+        del self.config['targets'][target_name][cfg_type][element_name]
         self.logger.debug("(Config.del_item) config updated to {}".format(self.config))
 
-        txn = ConfigTransaction(cfg_type, element_name, 'delete')
-        self.txn_list.append(txn)
+        txn = ConfigTransaction(target_name, cfg_type, element_name, 'delete')
+        self.target_txn_list.append(txn)
 
-    def update_item(self, cfg_type, element_name, element_value):
+    def update_item(self, target_name, cfg_type, element_name, element_value):
         now = get_time()
 
-        if element_name:
-            current_values = self.config[cfg_type][element_name]
-            self.logger.debug("prior to update, item contains {}".format(current_values))
-            if isinstance(element_value, dict):
-                merged = current_values.copy()
-                new_dict = element_value
-                new_dict['updated'] = now
-                merged.update(new_dict)
-                element_value = merged.copy()
+        current_values = self.config['targets'][target_name][cfg_type][element_name]
+        self.logger.debug("prior to update, item contains {}".format(current_values))
+        if isinstance(element_value, dict):
+            merged = current_values.copy()
+            new_dict = element_value
+            new_dict['updated'] = now
+            merged.update(new_dict)
+            element_value = merged.copy()
 
-            self.config[cfg_type][element_name] = element_value
-        else:
-            # update to a root level config element, like version
-            self.config[cfg_type] = element_value
+        self.config['targets'][target_name][cfg_type][element_name] = element_value
 
         self.logger.debug("(Config.update_item) config is {}".format(self.config))
         self.changed = True
-        self.logger.debug("update_item: type={}, item={}, update={}".format(cfg_type, element_name, element_value))
+        self.logger.debug("update_item: target={}, type={}, item={}, update={}".format(target_name, cfg_type, element_name, element_value))
 
-        txn = ConfigTransaction(cfg_type, element_name, 'add')
+        txn = ConfigTransaction(target_name, cfg_type, element_name, 'add')
         txn.item_content = element_value
-        self.txn_list.append(txn)
+        self.target_txn_list.append(txn)
 
     def _commit_rbd(self, post_action):
 
@@ -300,20 +348,38 @@ class Config(object):
         # reread the config to account for updates made by other systems
         # then apply this hosts update(s)
         current_config = json.loads(self._read_config_object(ioctx))
-        for txn in self.txn_list:
 
-            self.logger.debug("_commit_rbd transaction shows {}".format(txn))
-            if txn.action == 'add':         # add's and updates
-                if txn.item_name:
-                    current_config[txn.type][txn.item_name] = txn.item_content
+        if self.txn_list is not None:
+            for txn in self.txn_list:
+
+                self.logger.debug("_commit_rbd transaction shows {}".format(txn))
+                if txn.action == 'add':         # add's and updates
+                    if txn.item_name:
+                        current_config[txn.type][txn.item_name] = txn.item_content
+                    else:
+                        current_config[txn.type] = txn.item_content
+
+                elif txn.action == 'delete':
+                    del current_config[txn.type][txn.item_name]
                 else:
-                    current_config[txn.type] = txn.item_content
+                    self.error = True
+                    self.error_msg = "Unknown transaction type ({}} encountered in _commit_rbd".format(txn.action)
 
-            elif txn.action == 'delete':
-                del current_config[txn.type][txn.item_name]
-            else:
-                self.error = True
-                self.error_msg = "Unknown transaction type ({}} encountered in _commit_rbd".format(txn.action)
+        if self.target_txn_list is not None:
+            for target_txn in self.target_txn_list:
+
+                self.logger.debug("_commit_rbd transaction shows {}".format(target_txn))
+                if target_txn.action == 'add':         # add's and updates
+                    if target_txn.item_name:
+                        current_config['targets'][target_txn.target_name][target_txn.type][target_txn.item_name] = target_txn.item_content
+                    else:
+                        current_config['targets'][target_txn.target_name][target_txn.type] = target_txn.item_content
+
+                elif target_txn.action == 'delete':
+                    del current_config['targets'][target_txn.target_name][target_txn.type][target_txn.item_name]
+                else:
+                    self.error = True
+                    self.error_msg = "Unknown transaction type ({}} encountered in _commit_rbd".format(target_txn.action)
 
         if not self.error:
             if self.reset:

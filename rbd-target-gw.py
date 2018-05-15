@@ -79,14 +79,14 @@ def clearconfig():
     local_gw = this_host()
 
     # clear the current config, based on the config objects settings
-    lio = LIO()
+    lio = LIO(config)
     gw = Gateway(config)
 
     # This will fail incoming IO, but wait on outstanding IO to
     # complete normally. We rely on the initiator multipath layer
     # to handle retries like a normal path failure.
     logger.info("Removing iSCSI target from LIO")
-    gw.drop_target(local_gw)
+    gw.drop_targets(local_gw)
     if gw.error:
         logger.error("rbd-target-gw failed to remove target objects")
         return 8
@@ -115,17 +115,17 @@ def signal_stop(*args):
                         " - {}".format(config.error_msg))
         sys.exit(16)
 
-    local_gw = this_host()
-
-    if "gateways" in config.config:
-        if local_gw not in config.config["gateways"]:
-            logger.info("No gateway configuration to remove on this host "
-                        "({})".format(local_gw))
-            sys.exit(0)
-    else:
-        logger.info("Configuration object does not hold any gateway metadata"
-                    " - nothing to do")
-        sys.exit(0)
+#    local_gw = this_host()
+#
+#    for iqn in config.config['targets']:
+#        if local_gw not in config.config['targets'][iqn]["gateways"]:
+#            logger.info("No {} gateway configuration to remove on this host "
+#                        "({})".format(iqn, local_gw))
+#            sys.exit(0)
+#    else:
+#        logger.info("Configuration object does not hold any gateway metadata"
+#                    " - nothing to do")
+#        sys.exit(0)
 
     rc = clearconfig()
 
@@ -236,38 +236,54 @@ def portals_active():
     return get_tpgs() > 0
 
 
-def define_gateway():
+def define_gateways():
     """
     define the iSCSI target and tpgs
     :return: (object) gateway object
     """
+    # at this point we have a gateway entry that applies to the running host
+    # portals_already_active = portals_active()
 
-    gw_ip_list = config.config['gateways'].get('ip_list', None)
-    gw_iqn = config.config['gateways'].get('iqn', None)
+    for iqn in config.config['targets'].keys():
+        gw_ip_list = config.config['targets'][iqn]['gateways'].get('ip_list', None)
+        local_gw = this_host()
 
-    # Gateway Definition : Handle the creation of the Target/TPG(s) and Portals
-    # Although we create the tpgs, we flick the enable_portal flag off so the
-    # enabled tpg will not have an outside IP address. This prevents clients
-    # from logging in too early, failing and giving up because the nodeACL
-    # hasn't been defined yet (yes Windows I'm looking at you!)
+        if local_gw in config.config['targets'][iqn]['gateways']:
 
-    # first check if there are tpgs already in LIO (True) - this would indicate
-    # a restart or reload call has been made. If the tpg count is 0, this is a
-    # boot time request
+            # Gateway Definition : Handle the creation of the Target/TPG(s) and Portals
+            # Although we create the tpgs, we flick the enable_portal flag off so the
+            # enabled tpg will not have an outside IP address. This prevents clients
+            # from logging in too early, failing and giving up because the nodeACL
+            # hasn't been defined yet (yes Windows I'm looking at you!)
 
-    gateway = GWTarget(logger,
-                       gw_iqn,
-                       gw_ip_list,
-                       enable_portal=portals_active())
+            # first check if there are tpgs already in LIO (True) - this would indicate
+            # a restart or reload call has been made. If the tpg count is 0, this is a
+            # boot time request
+            logger.info("Processing {} gateways".format(iqn))
 
-    gateway.manage('target')
-    if gateway.error:
-        halt("Error creating the iSCSI target (target, TPGs, Portals)")
+            gateway = GWTarget(logger,
+                               iqn,
+                               gw_ip_list,
+                               enable_portal=portals_active())
 
-    return gateway
+            gateway.manage('target')
+            if gateway.error:
+                halt("Error creating the iSCSI target (target, TPGs, Portals)")
+
+            #return gateway
+
+            # if not portals_already_active:
+            # The tpgs, luns and clients are all defined, but the active tpg
+            # doesn't have an IP bound to it yet (due to the enable_portals=False
+            # setting above)
+            logger.info("Adding the IP to the enabled tpg, allowing iSCSI logins")
+            gateway.enable_active_tpg(config)
+            if gateway.error:
+                halt("Error enabling the IP with the active TPG")
 
 
-def define_luns(gateway):
+
+def define_luns():
     """
     define the disks in the config to LIO
     :param gateway: (object) gateway object - used for mapping
@@ -278,57 +294,67 @@ def define_luns(gateway):
 
     # sort the disks dict keys, so the disks are registered in a specific
     # sequence
-    disks = config.config['disks']
-    srtd_disks = sorted(disks)
-    pools = {disks[disk_key]['pool'] for disk_key in srtd_disks}
+    for iqn in config.config['targets'].keys():
+        if local_gw in config.config['targets'][iqn]['gateways']:
+            disks = config.config['targets'][iqn]['disks']
+            srtd_disks = sorted(disks)
+            pools = {disks[disk_key]['pool'] for disk_key in srtd_disks}
 
-    if pools:
-        with rados.Rados(conffile=settings.config.cephconf) as cluster:
+            if pools:
+                with rados.Rados(conffile=settings.config.cephconf) as cluster:
 
-            for pool in pools:
+                    for pool in pools:
 
-                logger.debug("Processing rbd's in '{}' pool".format(pool))
+                        logger.debug("Processing rbd's in '{}' pool".format(pool))
 
-                with cluster.open_ioctx(pool) as ioctx:
+                        with cluster.open_ioctx(pool) as ioctx:
 
-                    pool_disks = [disk_key for disk_key in srtd_disks
-                                  if disk_key.startswith(pool)]
-                    for disk_key in pool_disks:
+                            pool_disks = [disk_key for disk_key in srtd_disks
+                                          if disk_key.startswith(pool)]
+                            for disk_key in pool_disks:
 
-                        pool, image_name = disk_key.split('.')
+                                pool, image_name = disk_key.split('.')
 
-                        try:
-                            with rbd.Image(ioctx, image_name) as rbd_image:
-                                image_bytes = rbd_image.size()
-                                image_size_h = str(image_bytes) + 'b'
+                                try:
+                                    with rbd.Image(ioctx, image_name) as rbd_image:
+                                        image_bytes = rbd_image.size()
+                                        image_size_h = str(image_bytes) + 'b'
 
-                                lun = LUN(logger, pool, image_name,
-                                          image_size_h, local_gw)
-                                if lun.error:
-                                    halt("Error defining rbd image "
-                                         "{}".format(disk_key))
+                                        lun = LUN(logger, iqn, pool, image_name,
+                                                  image_size_h, local_gw)
+                                        if lun.error:
+                                            halt("Error defining rbd image "
+                                                 "{}".format(disk_key))
 
-                                lun.allocate()
-                                if lun.error:
-                                    halt("Error unable to register {} with "
-                                         "LIO - {}".format(disk_key,
-                                                           lun.error_msg))
+                                        lun.allocate()
+                                        if lun.error:
+                                            halt("Error unable to register {} with "
+                                                 "LIO - {}".format(disk_key,
+                                                                   lun.error_msg))
 
-                        except rbd.ImageNotFound:
-                            halt("Disk '{}' defined to the config, but image "
-                                 "'{}' can not be found in "
-                                 "'{}' pool".format(disk_key,
-                                                    image_name,
-                                                    pool))
+                                except rbd.ImageNotFound:
+                                    halt("Disk '{}' defined to the config, but image "
+                                         "'{}' can not be found in "
+                                         "'{}' pool".format(disk_key,
+                                                            image_name,
+                                                            pool))
 
-        # Gateway Mapping : Map the LUN's registered to all tpg's within the
-        # LIO target
-        gateway.manage('map')
-        if gateway.error:
-            halt("Error mapping the LUNs to the tpg's within the iscsi Target")
+                # Gateway Mapping : Map the LUN's registered to all tpg's within the
+                # LIO target
+                ip_list = config.config['targets'][iqn]['gateways']['ip_list']
 
-    else:
-        logger.info("No LUNs to export")
+                # Add the mapping for the lun to ensure the block device is
+                # present on all TPG's
+                gateway = GWTarget(logger,
+                                   iqn,
+                                   ip_list)
+
+                gateway.manage('map')
+                if gateway.error:
+                    halt("Error mapping the LUNs to the tpg's within the iscsi Target")
+
+            else:
+                logger.info("No LUNs to export")
 
 
 def define_clients():
@@ -336,26 +362,31 @@ def define_clients():
     define the clients (nodeACLs) to the gateway definition
     """
 
+    local_gw = this_host()
+
     # Client configurations (NodeACL's)
-    for client_iqn in config.config['clients']:
-        client_metadata = config.config['clients'][client_iqn]
-        client_chap = CHAP(client_metadata['auth']['chap'])
+    for target_iqn in  config.config['targets']:
+        if local_gw in config.config['targets'][target_iqn]['gateways']:
+            for client_iqn in config.config['targets'][target_iqn]['clients']:
+                client_metadata = config.config['targets'][target_iqn]['clients'][client_iqn]
+                client_chap = CHAP(client_metadata['auth']['chap'])
 
-        image_list = client_metadata['luns'].keys()
+                image_list = client_metadata['luns'].keys()
 
-        chap_str = client_chap.chap_str
-        if client_chap.error:
-            logger.debug("Password decode issue : "
-                         "{}".format(client_chap.error_msg))
-            halt("Unable to decode password for "
-                 "{}".format(client_iqn))
+                chap_str = client_chap.chap_str
+                if client_chap.error:
+                    logger.debug("Password decode issue : "
+                                 "{}".format(client_chap.error_msg))
+                    halt("Unable to decode password for "
+                         "{}".format(client_iqn))
 
-        client = GWClient(logger,
-                          client_iqn,
-                          image_list,
-                          chap_str)
+                client = GWClient(logger,
+                                  target_iqn,
+                                  client_iqn,
+                                  image_list,
+                                  chap_str)
 
-        client.manage('present')  # ensure the client exists
+                client.manage('present')  # ensure the client exists
 
 
 def apply_config():
@@ -375,36 +406,25 @@ def apply_config():
 
     # first check to see if we have any entries to handle - if not, there is
     # no work to do..
-    if "gateways" not in config.config:
+    #if "gateways" not in config.config:
+    if len(config.config['targets'].keys()) == 0:
         logger.info("Configuration is empty - nothing to define to LIO")
         config_loading = False
         return
-    if local_gw not in config.config['gateways']:
-        logger.info("Configuration does not have an entry for this host({}) - "
-                    "nothing to define to LIO".format(local_gw))
-        config_loading = False
-        return
-
-    # at this point we have a gateway entry that applies to the running host
-    portals_already_active = portals_active()
+#    if local_gw not in config.config['gateways']:
+#        logger.info("Configuration does not have an entry for this host({}) - "
+#                    "nothing to define to LIO".format(local_gw))
+#        config_loading = False
+#        return
 
     logger.info("Processing Gateway configuration")
-    gateway = define_gateway()
+    define_gateways()
 
     logger.info("Processing LUN configuration")
-    define_luns(gateway)
+    define_luns()
 
     logger.info("Processing client configuration")
     define_clients()
-
-    if not portals_already_active:
-        # The tpgs, luns and clients are all defined, but the active tpg
-        # doesn't have an IP bound to it yet (due to the enable_portals=False
-        # setting above)
-        logger.info("Adding the IP to the enabled tpg, allowing iSCSI logins")
-        gateway.enable_active_tpg(config)
-        if gateway.error:
-            halt("Error enabling the IP with the active TPG")
 
     config_loading = False
 
