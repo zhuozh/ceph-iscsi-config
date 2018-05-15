@@ -197,8 +197,9 @@ class RBDDev(object):
 
 class LUN(object):
 
-    def __init__(self, logger, pool, image, size, allocating_host):
+    def __init__(self, logger, iqn, pool, image, size, allocating_host):
         self.logger = logger
+        self.iqn = iqn
         self.image = image
         self.pool = pool
         self.pool_id = 0
@@ -227,7 +228,7 @@ class LUN(object):
 
         # Before we start make sure that the target host is actually
         # defined to the config
-        if self.allocating_host not in self.config.config['gateways'].keys():
+        if self.allocating_host not in self.config.config['targets'][self.iqn]['gateways'].keys():
             self.logger.critical("Owning host is not valid, please provide a "
                                  "valid gateway name for this rbd image")
             self.error = True
@@ -249,7 +250,7 @@ class LUN(object):
                          "performed by {}".format(self.allocating_host))
 
         # First ensure the LUN is not allocated to a client
-        clients = self.config.config['clients']
+        clients = self.config.config['targets'][self.iqn]['clients']
         lun_in_use = False
         for iqn in clients:
             client_luns = clients[iqn]['luns'].keys()
@@ -292,19 +293,20 @@ class LUN(object):
                 return
 
             # determine which host was the path owner
-            disk_owner = self.config.config['disks'][self.config_key]['owner']
+            disk_owner = self.config.config['targets'][self.iqn]['disks'][self.config_key]['owner']
 
             #
             # remove the definition from the config object
-            self.config.del_item('disks', self.config_key)
+            self.config.del_item(self.iqn, 'disks', self.config_key)
 
             # update the active_luns count for gateway that owned this
             # lun
-            gw_metadata = self.config.config['gateways'][disk_owner]
+            gw_metadata = self.config.config['targets'][self.iqn]['gateways'][disk_owner]
             if gw_metadata['active_luns'] > 0:
                 gw_metadata['active_luns'] -= 1
 
-                self.config.update_item('gateways',
+                self.config.update_item(self.iqn,
+                                        'gateways',
                                         disk_owner,
                                         gw_metadata)
 
@@ -346,7 +348,7 @@ class LUN(object):
                 rbd_image.create()
 
                 if not rbd_image.error:
-                    self.config.add_item('disks', self.config_key)
+                    self.config.add_item(self.iqn, 'disks', self.config_key)
                     self.logger.info("(LUN.allocate) created {}/{} "
                                      "successfully".format(self.pool,
                                                            self.image))
@@ -375,8 +377,8 @@ class LUN(object):
             if rbd_image.valid:
                 # rbd image is OK to use, so ensure it's in the config
                 # object
-                if self.config_key not in self.config.config['disks']:
-                    self.config.add_item('disks', self.config_key)
+                if self.config_key not in self.config.config['targets'][self.iqn]['disks']:
+                    self.config.add_item(self.iqn, 'disks', self.config_key)
 
             else:
                 # rbd image is not valid for export, so abort
@@ -423,7 +425,7 @@ class LUN(object):
             if this_host == self.allocating_host:
                 # first check to see if the device needs adding
                 try:
-                    wwn = self.config.config['disks'][self.config_key]['wwn']
+                    wwn = self.config.config['targets'][self.iqn]['disks'][self.config_key]['wwn']
                 except KeyError:
                     wwn = ''
 
@@ -436,7 +438,7 @@ class LUN(object):
 
                     # lun is now in LIO, time for some housekeeping :P
                     wwn = lun._get_wwn()
-                    self.owner = LUN.set_owner(self.config.config['gateways'])
+                    self.owner = LUN.set_owner(self.config.config['targets'][self.iqn]['gateways'])
                     self.logger.debug("{} owner will be {}".format(self.image,
                                                                    self.owner))
 
@@ -446,14 +448,15 @@ class LUN(object):
                                  "pool": self.pool,
                                  "pool_id": rbd_image.pool_id}
 
-                    self.config.update_item('disks',
+                    self.config.update_item(self.iqn, 'disks',
                                             self.config_key,
                                             disk_attr)
 
-                    gateway_dict = self.config.config['gateways'][self.owner]
+                    gateway_dict = self.config.config['targets'][self.iqn]['gateways'][self.owner]
                     gateway_dict['active_luns'] += 1
 
-                    self.config.update_item('gateways',
+                    self.config.update_item(self.iqn,
+                                            'gateways',
                                             self.owner,
                                             gateway_dict)
 
@@ -484,10 +487,10 @@ class LUN(object):
                 waiting = 0
                 while waiting < settings.config.time_out:
                     self.config.refresh()
-                    if self.config_key in self.config.config['disks']:
-                        if 'wwn' in self.config.config['disks'][self.config_key]:
-                            if self.config.config['disks'][self.config_key]['wwn']:
-                                wwn = self.config.config['disks'][self.config_key]['wwn']
+                    if self.config_key in self.config.config['targets'][self.iqn]['disks']:
+                        if 'wwn' in self.config.config['targets'][self.iqn]['disks'][self.config_key]:
+                            if self.config.config['targets'][self.iqn]['disks'][self.config_key]['wwn']:
+                                wwn = self.config.config['targets'][self.iqn]['disks'][self.config_key]['wwn']
                                 break
                     sleep(settings.config.loop_delay)
                     waiting += settings.config.loop_delay
@@ -523,7 +526,7 @@ class LUN(object):
                 return
 
         self.logger.debug("config meta data for this disk is "
-                          "{}".format(self.config.config['disks'][self.config_key]))
+                          "{}".format(self.config.config['targets'][self.iqn]['disks'][self.config_key]))
 
         # the owning host for an image is the only host that commits to the
         # config

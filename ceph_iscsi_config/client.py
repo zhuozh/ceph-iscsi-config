@@ -28,7 +28,7 @@ class GWClient(object):
                      "group_name": ""
                      }
 
-    def __init__(self, logger, client_iqn, image_list, chap):
+    def __init__(self, logger, target_iqn, client_iqn, image_list, chap):
         """
         Instantiate an instance of an LIO client
         :param client_iqn: (str) iscsi iqn string
@@ -38,6 +38,7 @@ class GWClient(object):
         :return:
         """
 
+        self.target_iqn = target_iqn
         self.iqn = client_iqn
         self.lun_lookup = {}        # only used for hostgroup based definitions
         self.requested_images = []
@@ -151,10 +152,10 @@ class GWClient(object):
 
         # NB. this will check all tpg's for a matching iqn
         for client in r.node_acls:
-            if client.node_wwn == self.iqn:
+            if client.parent_tpg.parent_target.wwn == self.target_iqn and client.node_wwn == self.iqn:
                 self.acl = client
                 self.tpg = client.parent_tpg
-                self.logger.debug("(Client.define_client) - {} already "
+                self.logger.debug("(client.define_client) - {} already "
                                   "defined".format(self.iqn))
                 return
 
@@ -162,7 +163,7 @@ class GWClient(object):
         # The configuration only has one active tpg, so pick that one for any
         # acl definitions
         for tpg in r.tpgs:
-            if tpg.enable:
+            if tpg.parent_target.wwn == self.target_iqn and tpg.enable:
                 self.tpg = tpg
 
         try:
@@ -373,8 +374,8 @@ class GWClient(object):
         function to seed the config object with a new client definition
         """
 
-        config.add_item("clients", self.iqn)
-        config.update_item("clients", self.iqn, GWClient.seed_metadata)
+        config.add_item(self.target_iqn, "clients", self.iqn)
+        config.update_item(self.target_iqn, "clients", self.iqn, GWClient.seed_metadata)
 
         # persist the config update, and leave the connection to the ceph
         # object open since adding just the iqn is only the start of the
@@ -423,8 +424,8 @@ class GWClient(object):
             # already in the config object - if so this is just a rerun, or a
             # reboot so config object updates are not needed when we change
             # the LIO environment
-            if self.iqn in self.current_config['clients'].keys():
-                self.metadata = self.current_config['clients'][self.iqn]
+            if self.iqn in self.current_config['targets'][self.target_iqn]['clients'].keys():
+                self.metadata = self.current_config['targets'][self.target_iqn]['clients'][self.iqn]
                 config_image_list = sorted(self.metadata['luns'].keys())
 
                 #
@@ -501,7 +502,7 @@ class GWClient(object):
                         # update the config object with this clients settings
                         self.logger.debug("Updating config object metadata "
                                           "for '{}'".format(self.iqn))
-                        config_object.update_item("clients",
+                        config_object.update_item(self.target_iqn, "clients",
                                                   self.iqn,
                                                   self.metadata)
 
@@ -523,7 +524,7 @@ class GWClient(object):
                     if update_host == gethostname().split('.')[0]:
                         self.logger.debug("Removing {} from the config "
                                           "object".format(self.iqn))
-                        config_object.del_item("clients", self.iqn)
+                        config_object.del_item(self.target_iqn, "clients", self.iqn)
                         config_object.commit()
 
             else:
@@ -558,8 +559,8 @@ class GWClient(object):
         """
 
         ptr = 0
-        potential_hosts = [host_name for host_name in config["gateways"].keys()
-                           if isinstance(config["gateways"][host_name], dict)]
+        potential_hosts = [host_name for host_name in config['targets'][self.target_iqn]["gateways"].keys()
+                           if isinstance(config['targets'][self.target_iqn]["gateways"][host_name], dict)]
 
         # Assume the 1st element from the list is OK for now
         # TODO check the potential hosts are online/available

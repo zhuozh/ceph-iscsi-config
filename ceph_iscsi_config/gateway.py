@@ -19,6 +19,13 @@ class GWTarget(object):
     Class representing the state of the local LIO environment
     """
 
+    seed_metadata = {
+                     "clients": {},
+                     "disks": {},
+                     "luns": {},
+                     "gateways": {}
+                     }
+
     def __init__(self, logger, iqn, gateway_ip_list, enable_portal=True):
         """
         Instantiate the class
@@ -144,12 +151,16 @@ class GWTarget(object):
         # check that there aren't any disks or clients in the configuration
         lio_root = root.RTSRoot()
 
-        disk_count = len([disk for disk in lio_root.storage_objects])
+        #disk_count = len([disk for disk in lio_root.storage_objects])
         clients = []
+        luns = []
         for tpg in self.tpg_list:
             tpg_clients = [node for node in tpg._list_node_acls()]
             clients += tpg_clients
+            tpg_luns = [lun for lun in tpg.luns]
+            luns += tpg_luns
         client_count = len(clients)
+        disk_count = len(luns) >> len(self.tpg_list)
 
         if disk_count > 0 or client_count > 0:
             self.error = True
@@ -290,7 +301,7 @@ class GWTarget(object):
 
         stg_object = lun.storage_object
 
-        owning_gw = config.config['disks'][stg_object.name]['owner']
+        owning_gw = config.config['targets'][self.iqn]['disks'][stg_object.name]['owner']
         tpg = lun.parent_tpg
 
         if tpg_ip_address is None:
@@ -308,7 +319,7 @@ class GWTarget(object):
         # we should be creating different LU groups or creating different
         # alua groups for each LU.
         try:
-            if config.config["gateways"][owning_gw]["portal_ip_address"] == tpg_ip_address:
+            if config.config['targets'][self.iqn]["gateways"][owning_gw]["portal_ip_address"] == tpg_ip_address:
                 self.logger.info("setting {} to ALUA/ActiveOptimised "
                                  "group id {}".format(stg_object.name, tpg.tag))
                 group_name = "ao"
@@ -362,11 +373,10 @@ class GWTarget(object):
 
         # process each storage object added to the gateway, and map to the tpg
         for stg_object in lio_root.storage_objects:
-
             for tpg in self.tpg_list:
-                self.logger.debug("processing tpg{}".format(tpg.tag))
-
-                if not self.lun_mapped(tpg, stg_object):
+                if stg_object.name in config.config['targets'][self.iqn]['disks'].keys() \
+                            and not self.lun_mapped(tpg, stg_object):
+                    self.logger.debug("processing tpg{}".format(tpg.tag))
                     self.logger.debug("{} needed mapping to "
                                       "tpg{}".format(stg_object.name,
                                                      tpg.tag))
@@ -401,7 +411,8 @@ class GWTarget(object):
         return mapped_state
 
     def delete(self):
-        self.target.delete()
+        if self.target:
+            self.target.delete()
 
     def manage(self, mode):
         """
@@ -432,24 +443,19 @@ class GWTarget(object):
                 # return to caller, with error state set
                 return
 
-            gateway_group = config.config["gateways"].keys()
+            gateway_group = config.config['targets'][self.iqn]["gateways"].keys()
 
             # this action could be carried out by multiple nodes concurrently,
             # but since the value is the same (i.e all gateway nodes use the
             # same iqn) it's not worth worrying about!
-            if "iqn" not in gateway_group:
-                self.config_updated = True
-                config.add_item("gateways",
-                                "iqn",
-                                initial_value=self.iqn)
-
             if "ip_list" not in gateway_group:
                 self.config_updated = True
-                config.add_item("gateways",
+                config.add_item(self.iqn, "gateways",
                                 "ip_list",
                                 initial_value=self.gateway_ip_list)
 
             if local_gw not in gateway_group:
+
                 inactive_portal_ip = list(self.gateway_ip_list)
                 inactive_portal_ip.remove(self.active_portal_ip)
                 gateway_metadata = {"portal_ip_address": self.active_portal_ip,
@@ -459,21 +465,21 @@ class GWTarget(object):
                                     "inactive_portal_ips": inactive_portal_ip,
                                     "gateway_ip_list": self.gateway_ip_list}
 
-                config.add_item("gateways", local_gw)
-                config.update_item("gateways", local_gw, gateway_metadata)
-                config.update_item("gateways", "ip_list", self.gateway_ip_list)
+                config.add_item(self.iqn, "gateways", local_gw)
+                config.update_item(self.iqn, "gateways", local_gw, gateway_metadata)
+                config.update_item(self.iqn, "gateways", "ip_list", self.gateway_ip_list)
                 self.config_updated = True
             else:
                 # gateway already defined, so check that the IP list it has
                 # matches the current request
-                gw_details = config.config['gateways'][local_gw]
+                gw_details = config.config['targets'][self.iqn]['gateways'][local_gw]
                 if cmp(gw_details['gateway_ip_list'], self.gateway_ip_list) != 0:
                     inactive_portal_ip = list(self.gateway_ip_list)
                     inactive_portal_ip.remove(self.active_portal_ip)
                     gw_details['tpgs'] = len(self.tpg_list)
                     gw_details['gateway_ip_list'] = self.gateway_ip_list
                     gw_details['inactive_portal_ips'] = inactive_portal_ip
-                    config.update_item('gateways', local_gw, gw_details)
+                    config.update_item(self.iqn, 'gateways', local_gw, gw_details)
                     self.config_updated = True
 
             if self.config_updated:
@@ -504,14 +510,9 @@ class GWTarget(object):
             else:
                 # create the target
                 self.create_target()
-                current_iqn = config.config['gateways'].get('iqn', '')
-
-                # First gateway asked to create the target will update the
-                # config object
-                if not current_iqn:
-
-                    config.add_item("gateways", "iqn", initial_value=self.iqn)
-                    config.commit()
+                config.add_target_item(self.iqn)
+                config.update_target_item(self.iqn, GWTarget.seed_metadata)
+                config.commit()
 
         elif mode == 'clearconfig':
             # Called by API from CLI clearconfig command
@@ -524,19 +525,32 @@ class GWTarget(object):
             self.clear_config()
 
             if not self.error:
-                gw_ip = config.config['gateways'][local_gw]['portal_ip_address']
+                ip_list = config.config['targets'][self.iqn]['gateways']['ip_list']
 
-                config.del_item('gateways', local_gw)
+                if len(ip_list) > 1:
+                    gw_ip = config.config['targets'][self.iqn]['gateways'][local_gw]['portal_ip_address']
 
-                ip_list = config.config['gateways']['ip_list']
-                ip_list.remove(gw_ip)
-                if len(ip_list) > 0:
-                    config.update_item('gateways', 'ip_list', ip_list)
+                    config.del_item(self.iqn, 'gateways', local_gw)
+
+                    ip_list.remove(gw_ip)
+                    config.update_item(self.iqn, 'gateways', 'ip_list', ip_list)
                 else:
                     # no more gateways in the list, so delete remaining items
-                    config.del_item('gateways', 'ip_list')
-                    config.del_item('gateways', 'iqn')
-                    config.del_item('gateways', 'created')
+                    config.del_target_item(self.iqn)
+                    #config.del_item(self.iqn, 'gateways', 'created')
+#                gw_ip = config.config['targets'][self.iqn]['gateways'][local_gw]['portal_ip_address']
+#
+#                config.del_item(self.iqn, 'gateways', local_gw)
+#
+#                ip_list = config.config['targets'][self.iqn]['gateways']['ip_list']
+#                ip_list.remove(gw_ip)
+#                if len(ip_list) > 0:
+#                    config.update_item(self.iqn, 'gateways', 'ip_list', ip_list)
+#                else:
+#                    # no more gateways in the list, so delete remaining items
+#                    config.del_item(self.iqn, 'gateways', 'ip_list')
+#                    config.del_target_item(self.iqn)
+#                    #config.del_item(self.iqn, 'gateways', 'created')
 
                 config.commit()
 

@@ -97,6 +97,9 @@ class Settings(object):
             if k == 'trusted_ip_list':
                 v = v.split(',') if v else []
 
+            if k == 'available_ip_list':
+                v = v.split(',') if v else []
+
             if v in ['true', 'True', 'false', 'False']:
                 v = strtobool(v)
 
