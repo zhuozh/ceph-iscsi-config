@@ -615,7 +615,8 @@ class LUN(object):
             new_lun = UserBackedStorageObject(name=self.config_key,
                                               config=cfgstring,
                                               size=self.size_bytes,
-                                              wwn=in_wwn)
+                                              wwn=in_wwn,
+                                              hw_max_sectors=512)
         except RTSLibError as err:
             self.error = True
             self.error_msg = ("failed to add {} to LIO - "
