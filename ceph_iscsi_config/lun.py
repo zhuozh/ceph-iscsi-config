@@ -626,7 +626,7 @@ class LUN(object):
             return None
 
         try:
-            new_lun.set_attribute("cmd_time_out", 0)
+            new_lun.set_attribute("cmd_time_out", 30)
             new_lun.set_attribute("qfull_time_out",
                                   settings.config.qfull_timeout)
         except RTSLibError as err:
