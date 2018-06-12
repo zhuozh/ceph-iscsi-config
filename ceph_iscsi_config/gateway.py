@@ -78,6 +78,7 @@ class GWTarget(object):
         self.target = None
         self.tpg = None
         self.tpg_list = []
+        self.tpg_tags = []
 
     def exists(self):
         """
@@ -208,6 +209,7 @@ class GWTarget(object):
                                   "portal ip {} as disabled".format(ip))
 
             self.tpg_list.append(tpg)
+            self.tpg_tags.append(tpg.tag)
 
         except RTSLibError as err:
             self.error_msg = err
@@ -276,6 +278,7 @@ class GWTarget(object):
             # there could/should be multiple tpg's for the target
             for tpg in self.target.tpgs:
                 self.tpg_list.append(tpg)
+                self.tpg_tags.append(tpg.tag)
 
             # self.portal = self.tpg.network_portals.next()
 
@@ -319,18 +322,35 @@ class GWTarget(object):
         # we should be creating different LU groups or creating different
         # alua groups for each LU.
         try:
-            if config.config['targets'][self.iqn]["gateways"][owning_gw]["portal_ip_address"] == tpg_ip_address:
+            if config.config['targets'][self.iqn]["gateways"][owning_gw]["portal_ip_address"] \
+                                                                        == tpg_ip_address:
                 self.logger.info("setting {} to ALUA/ActiveOptimised "
                                  "group id {}".format(stg_object.name, tpg.tag))
                 group_name = "ao"
                 alua_tpg = ALUATargetPortGroup(stg_object, group_name, tpg.tag)
                 alua_tpg.alua_access_state = 0
+                alua_tpg.preferred = 1
+                self.logger.info("setting group id {} as preferred".format(tpg.tag))
             else:
                 self.logger.info("setting {} to ALUA/ActiveNONOptimised "
                                  "group id {}".format(stg_object.name, tpg.tag))
                 group_name = "ano{}".format(tpg.tag)
                 alua_tpg = ALUATargetPortGroup(stg_object, group_name, tpg.tag)
                 alua_tpg.alua_access_state = 1
+
+                tags = sorted(self.tpg_tags, reverse=False)
+                for g in self.tpg_list:
+                    for p in g.network_portals:
+                        tpg_ip_addr = p.ip_address
+                        break
+                    if config.config['targets'][self.iqn]["gateways"][owning_gw]["portal_ip_address"] \
+                                                                            == tpg_ip_addr:
+                        tags.remove(g.tag)
+
+                if len(self.tpg_list) ==3 and tpg.tag == tags[0]:
+                    alua_tpg.preferred = 1
+                    self.logger.info("selectd preferred from group id {}, chosing group id {} "
+                                      "as preferred".format(tags, tpg.tag))
         except RTSLibError as err:
                 self.logger.info("ALUA group id {} for stg obj {} lun {} "
                                  "already made".format(tpg.tag, stg_object, lun))
