@@ -3,6 +3,7 @@
 import os
 import rados
 import rbd
+import random
 
 from time import sleep
 from socket import gethostname
@@ -708,13 +709,9 @@ class LUN(object):
                     if isinstance(gateways[key], dict)}
         gw_items = gw_nodes.items()
 
-        # first entry is the lowest number of active_luns
-        gw_items.sort(key=lambda x: (x[1]['active_luns']))
+        selected = random.choice(gw_items)
 
-        # 1st tuple is gw with lowest active_luns, so return the 1st
-        # element which is the hostname
-        return gw_items[0][0]
-
+        return selected[0]
 
 def rados_pool(conf=None, pool='rbd'):
     """
