@@ -1,6 +1,6 @@
 Name:           ceph-iscsi-config
-Version:        2.5
-Release:        1%{?dist}
+Version:        2.6
+Release:        3%{?dist}
 Summary:        Python package providing modules for ceph iscsi gateway configuration management
 
 License:        GPLv3
@@ -60,6 +60,22 @@ install -m 0644 .%{_unitdir}/rbd-target-gw.service %{buildroot}%{_unitdir}
 %{_unitdir}/rbd-target-gw.service
 
 %changelog
+* Tue Jun 12 2018 Zhuoyu Zhang <zhangzhuoyu@cmss.chinamobile.com> - 2.6-3
+- lun: let set_owner use random
+- use preferred bit to promote the priority of ao/ano2
+- do not set cmd_time_out and qfull_time_out, use lio default value
+
+* Wed May 24 2018 Zhuoyu Zhang <zhangzhuoyu@cmss.chinamobile.com> - 2.6-2
+- set lun cmd_time_out to 30
+
+* Mon May 21 2018 Zhuoyu Zhang <zhangzhuoyu@cmss.chinamobile.com> - 2.6-1
+- disable rbd feature object-map, fast-diff, deep-flatten
+- for tanji
+- set hw_max_sectors to 512 to improve sequential rw performance
+- support multiple target
+- utils: remove unused human_size
+- gateway: fix lun size mismatch when gateway restart
+
 * Mon Feb 26 2018 Paul Cuzner <pcuzner@redhat.com> - 2.5-1
 - add prometheus endpoint to rbd-target-gw
 - additional options added to 'settings' to enable/disable prometheus exporter
